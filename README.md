@@ -7,4 +7,4 @@
 7. Access to `atbd-24-25-entrega-1`: cd atbd-24-25-entrega-1
 8. Install requirements: `pip install -r requirements.txt`
 9. Install nginx log generator: `ansible-playbook -i inventory.aws_ec2.yml --key-file=~/.ssh/vockey.pem --user ec2-user install-nginx.yml`
-7. Nginx logs can be accessed at /var/log/nginx.log 
+7. Nginx logs can be accessed at /home/ec2-user/log/nginx.log 
