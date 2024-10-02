@@ -1,0 +1,110 @@
+---
+- hosts: localhost
+  tasks:
+  - name: Install Docker Galaxy package
+    community.general.ansible_galaxy_install:
+      type: collection
+      name: community.docker
+
+  - name: Get my public IP
+    community.general.ipify_facts:
+
+  - name: Create security group for node communication
+    amazon.aws.ec2_security_group:
+      name: hadoop-sg
+      description: sg with total access within hadoop nodes
+      region: us-east-1
+      rules:
+        - proto: all
+          group_name: hadoop-sg
+        
+  - name: Create a security group for communication to outside
+    amazon.aws.ec2_security_group:
+      name: hadoop-master-sg
+      description: sg with partial access to hadoop-master node
+      region: us-east-1
+      rules:
+        - proto: tcp
+          cidr_ip: "{{ ipify_public_ip }}/32"
+          ports: 
+          - 22
+
+  - name: Start nginx instance
+    amazon.aws.ec2_instance:
+      state: "running"
+      name: "nginx"
+      key_name: "vockey"
+      instance_type: t3.large
+      security_groups: 
+        - hadoop-sg
+        - hadoop-master-sg
+      image_id: ami-066784287e358dad1
+      region: us-east-1
+      tags:
+        Group: nginx
+      volumes:
+      - device_name: /dev/sda1
+        ebs:
+          volume_size: 20
+          delete_on_termination: true
+
+  - meta: refresh_inventory
+
+- hosts: tag_Group_nginx
+  tasks:
+  - name: Install the latest version of Docker
+    become: true
+    ansible.builtin.yum:
+      name: docker
+      state: latest
+
+  - name: Make sure docker is running
+    become: true
+    ansible.builtin.systemd_service:
+      state: started
+      enabled: true
+      name: docker
+      
+  - name: Enable docker without sudo
+    become: true
+    ansible.builtin.command: usermod -a -G docker ec2-user
+
+  - meta: reset_connection
+
+  - name: Install git
+    become: true
+    ansible.builtin.yum:
+      name: git
+      state: latest
+
+  - name: Git clone nginx-log-generator image
+    ansible.builtin.git:
+      repo: 'https://github.com/memaldi/nginx-log-generator'
+      dest: /home/ec2-user/nginx-log-generator
+
+  - name: Build docker image
+    community.docker.docker_image:
+      build:
+        path: /home/ec2-user/nginx-log-generator
+      name: atbd/nginx-log-generator
+      source: build
+
+  - name: Run nginx log generator
+    ansible.builtin.command: docker run -d --name nginx --restart=unless-stopped -v /home/ec2-user/log/:/tmp/ -e "RATE=5" atbd/nginx-log-generator
+
+  - name: Stop nginx log generator
+    ansible.builtin.command: docker stop nginx
+
+  - name: Copy nginx-generator.service to host
+    become: true
+    ansible.builtin.copy:
+      src: nginx-generator.service
+      dest: /etc/systemd/system/nginx-generator.service
+
+  - name: Start nginx log generator
+    become: true
+    systemd:
+      state: started
+      name: nginx-generator
+      daemon_reload: true
+      enabled: true
